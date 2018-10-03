@@ -1,0 +1,57 @@
+search index=_internal sourcetype=dispatch ERROR unknown error earliest=@d-1d latest=now 
+    | dedup _raw host 
+    | regex _raw="^[^\s]+\s[^\s]+\sERROR" 
+    | regex _raw="please\s\S{5}\s" 
+    | rex field=_raw "Unknown error for peer (?<peer>[^\.]+)" 
+    | fields _time _raw host peer] 
+| sort 50000 - _time 
+| dedup _raw host 
+| table _time _raw host peer 
+| | rename comment as "We want to answer the question: at a given moment, what is the chance we get an unknown error for a host-peer combination in the next 15 minutes?"
+| rename comment as "Base the data on the last month of unknown errors"
+| eval earliest=relative_time(now(),"@d-14d"), latest=relative_time(now(),"@d") 
+| where _time>earliest AND _time<latest
+
+| rename comment as "Generic fields"
+| eval originalTime=strftime(_time,"%c"), hostPeer=host."-".peer, monthDay=strftime(_time,"%m-%d")
+
+| rename comment as "Translate the _time timestamp to today, This alows to chart the errors in a single timechart."
+| eval _time=_time+( relative_time(now(),"@d")-relative_time(_time,"@d") )
+
+| rename comment as "Bucket the time for whole minutes, make sure that 13:15:23 => 13:15:23 by adding 60 seconds to the _time" 
+| eval _time=_time+60
+| bucket _time span=1m
+| eval bucketTime=strftime(_time,"%c")
+
+| rename comment as "Expand every unknown error into 3 events, this is to solve issues on the left and right of the timerange" 
+| eval times=mvrange(_time-86400,_time+86401,86400) 
+| mvexpand times
+| eval _time=times
+| fields - times
+
+| rename comment as "The events were duplicated in three, now, delete a big part of them by only selecting 'today' +/- 1 hour"
+| eval earliest=relative_time(now(),"@d-1h"), latest=relative_time(now(),"@d+1d+1h") 
+| where _time>earliest AND _time<latest 
+
+| rename comment as "Expand every unknown error into 15 events, starting 15 minutes before the unknown error. " 
+| eval times=mvrange(_time-900-1,_time+1,60) 
+| mvexpand times
+| eval _time=times
+| fields - times
+
+| eventstats dc(monthDay) as monthDayCountByTime by hostPeer _time
+| eventstats dc(monthDay) as numberOfMonthDays
+
+| rename comment as "The events were duplicated in three, now, delete the left and right one by only selecting 'today'"
+| eval earliest=relative_time(now(),"@d"), latest=relative_time(now(),"@d+1d") 
+| where _time>earliest AND _time<latest 
+
+| rename comment as "translate the monthDayCountByTime into a chance"
+| eval errorChanceWithin15minutes=round(monthDayCountByTime/numberOfMonthDays*100,1)
+
+| rename comment as "Select only hostPeers whose max chance on unknown errors is higher than 10%"
+| eventstats max(errorChanceWithin15minutes) as maxErrorChanceWithin15minutes by hostPeer
+| search maxErrorChanceWithin15minutes>10
+
+| table _time hostPeer errorChanceWithin15minutes monthDayCountByTime numberOfMonthDays maxErrorChanceWithin15minutes
+| timechart limit=0 span=5m max(errorChanceWithin15minutes) by hostPeer

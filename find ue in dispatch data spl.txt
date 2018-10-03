@@ -1,0 +1,5 @@
+index=_internal sourcetype=dispatch ERROR "unknown error" | regex _raw="^[^\s]+\s[^\s]+\sERROR" 
+| regex _raw="please\s\S{5}\s"
+| rex field=_raw "Unknown error for peer (?<peer>[^\.]+)" 
+| eval clientAndErrorSource=host."-".peer
+| timechart span=5m limit=0 count by clientAndErrorSource

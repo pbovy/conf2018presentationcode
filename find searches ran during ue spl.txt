@@ -1,0 +1,21 @@
+index=_internal sourcetype=dispatch ERROR "unknown error"
+| regex _raw="^[^\s]+\s[^\s]+\sERROR"
+| regex _raw="please\s\S{5}\s"
+| rex field=_raw "Unknown error for peer (?<peer>[^\.]+)"
+| table _time peer _raw
+| eval bucketTime=_time
+| bucket bucketTime span=1m
+| eval windowEarliest=_time-(3600*5), windowLatest=_time+(3600*5), peer=peer." ", raw=_raw." "
+| map maxsearches=500 search="search index=_internal sourcetype=scheduler source=/opt/splunk/var/log/splunk/scheduler.log status=* savedsearch_name=* app=* run_time=*
+    earliest=$windowEarliest$ latest=$windowLatest$
+| fields _time host user app savedsearch_name status dispatch_time run_time 
+| eval run_time=round(run_time,0)
+| eval times=mvrange(dispatch_time,dispatch_time+run_time,60)
+| mvexpand times
+| rename times as _time, host as searchHead
+| bucket _time span=1m
+| search _time=$bucketTime$
+| stats values(savedsearch_name) as savedsearch_name by _time
+| eval details=$raw$"
+| table _time details savedsearch_name
+| rename savedsearch_name as "runningSavedSearch"

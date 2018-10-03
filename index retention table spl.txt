@@ -1,0 +1,20 @@
+| rest /services/data/indexes count=0 
+| table title, eai:acl.app, repFactor, currentDBSizeMB, frozenTimePeriodInSecs, homePath.maxDataSizeMB, coldPath.maxDataSizeMB, maxTotalDataSizeMB,splunk_server 
+| rename title as Index, eai:acl.app as App, currentDBSizeMB as CurrentTotalSizeOnDiskMB, homePath.maxDataSizeMB as CurrentHotWarmDefMB, coldPath.maxDataSizeMB as CurrentColdDefMB, maxTotalDataSizeMB as CurrentTotalDefMB 
+| eval CurrentfrozenTime=round(frozenTimePeriodInSecs/86400,0) 
+| eval 2BFrozenTime=if(CurrentfrozenTime<181,365,CurrentfrozenTime) 
+| search splunk_server=ics106061038 
+| join type=inner Index 
+    [ search index=index_utilization_summary 
+    | stats avg(total_volume) AS AvgGB by idx 
+    | rename idx as Index 
+    | eval AvgMB=round(1000*AvgGB/16,0) 
+    | table Index, AvgMB] 
+| eval 2BWarmDef=if(round(20*AvgMB,0)<1000,1000,if(round(20*AvgMB,0)<5000,5000,round(20*AvgMB/10000,0)*10000)) 
+| eval 2BTotalDef=(round(if(CurrentfrozenTime<181,365,CurrentfrozenTime)*AvgMB/10000,0)+1)*10000 
+| eval 2BColdDef=((round(if(CurrentfrozenTime<181,365,CurrentfrozenTime)*AvgMB/10000,0)+1)*10000)-(if(round(20*AvgMB,0)<1000,1000,if(round(20*AvgMB,0)<5000,5000,round(20*AvgMB/10000,0)*10000))) 
+| eval CurrentWarmRetention=round(CurrentHotWarmDefMB/AvgMB,0) 
+| eval CurrentColdRetentionDef=round(CurrentColdDefMB/AvgMB,0) 
+| eval CurrentColdRetentionOnDisk=round(CurrentTotalSizeOnDiskMB/AvgMB,0) 
+| rename repFactor AS "Replication Factor", CurrentfrozenTime AS "Current Frozen Time (Days)", AvgMB AS "Avg MB Per Day", CurrentHotWarmDefMB AS "Current Hot Warm Definition (MB)", 2BWarmDef AS "To Be Warm Definition (MB)", CurrentWarmRetention AS "Current Warm Retention (Days)", CurrentColdDefMB AS "Current Cold Definition (MB)", 2BColdDef AS "To Be Cold Definition (MB)", CurrentColdRetentionOnDisk AS "Current Cold Retention on Disk (Days)",CurrentColdRetentionDef AS "Current Cold Retention Definition (Days)", 2BFrozenTime AS "To Be Frozen Time (Days)", CurrentTotalDefMB AS "Current Total Definition (MB)", 2BTotalDef AS "To Be Total Definition (MB)", CurrentTotalSizeOnDiskMB AS "Current Total Size On Disk (MB)" 
+| table Index, App, "Replication Factor", "Avg MB Per Day", "Current Warm Retention (Days)", "Current Cold Retention on Disk (Days)", "Current Frozen Time (Days)", "Current Hot Warm Definition (MB)", "To Be Warm Definition (MB)", "Current Cold Definition (MB)", "To Be Cold Definition (MB)", "Current Cold Retention Definition (Days)", "Current Total Size On Disk (MB)", "To Be Frozen Time (Days)", "Current Total Definition (MB)", "To Be Total Definition (MB)"
